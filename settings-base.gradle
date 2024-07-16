@@ -1,0 +1,169 @@
+
+rootProject.name = projectInfo.name
+gradle.rootProject {
+  version = projectInfo.version
+  group = 'com.spglobal.cfi'
+
+  ext {
+    encoding = 'UTF-8'
+    exportDir = "$rootDir/export"
+    product = projectInfo.description
+    vendor  = 'ClariFI'
+    manifestAttributes = [ //DP: build with JDK11+ to keep manifest order in jars
+      'Manifest-Version' : '1.0',
+      'Created-By' : "Gradle ${gradle.gradleVersion}",
+      'Built-By'   : System.properties[ 'user.name' ],
+      'Built-On'   : new Date().format( 'yyyy-MM-dd HH:mm:ss.SSSZ' ),
+      'Git-tag'    : 'git rev-parse HEAD'.execute().text.trim(),
+      'Git-branch' : 'git rev-parse --abbrev-ref HEAD'.execute().text.trim(),
+      'Sealed'     : true,
+      'Implementation-Title'   : product,
+      'Implementation-Version' : version,
+      'Implementation-Vendor'  : vendor,
+      'Specification-Title'    : product,
+      'Specification-Version'  : version,
+      'Specification-Vendor'   : vendor
+    ]
+    credArtifactory = {
+      username System.env[ 'ARTIFACTORY_REPO_USER' ]
+      password System.env[ 'ARTIFACTORY_REPO_PASS' ]
+    }
+  }
+
+  allprojects { // use 'subprojects' instead of 'allprojects' if root project is for aggregation only and does not have sources
+
+    apply plugin: 'java-library'
+    apply plugin: 'maven-publish'
+
+    configurations.all { //DP: use to force expire dependency resolution, otherwise run: gradlew clean build --refresh-dependencies
+      resolutionStrategy.cacheChangingModulesFor 0, 'seconds'
+      resolutionStrategy.cacheDynamicVersionsFor 0, 'seconds'
+    }
+
+    sourceSets { //DP: use if resources are kept in the source tree
+      main.resources.srcDirs = main.java.srcDirs
+      test.resources.srcDirs = test.java.srcDirs
+    }
+
+    java {
+      modularity.inferModulePath = true
+      sourceCompatibility = 11 //DP: Glav uses 21 for Java21 here
+      targetCompatibility = 11 //DP: Glav uses 21 for Java21 here
+    }
+
+    test {
+      useJUnitPlatform()
+      outputs.upToDateWhen { false } //DP: to run all tests always
+      testLogging {
+        events 'passed', 'skipped', 'failed'
+        showStandardStreams = true
+        exceptionFormat 'full'
+        stackTraceFilters 'entryPoint'
+      }
+    }
+
+    compileJava.options.encoding     = encoding //DP: defined in settings.gradle as ext.encoding, see above
+    compileTestJava.options.encoding = encoding
+    javadoc.options.encoding         = encoding
+    test.defaultCharacterEncoding    = encoding
+
+    repositories {
+      mavenLocal {
+      }
+      mavenCentral {
+        content {  // this repository contains everything BUT artifacts with group
+          excludeGroupByRegex rootProject.group.toString().replace( '.', '\\.' ) + '.*'
+        }
+      }
+      maven {
+        name = 'clarifiSnapshots'
+        url  = 'https://repo.ihsmarkit.com/artifactory/inhouse_snapshot-local'
+        credentials( credArtifactory )
+      }
+      maven {
+        name = 'clarifiReleases'
+        url  = 'https://repo.ihsmarkit.com/artifactory/inhouse-local'
+        credentials( credArtifactory )
+      }
+    }
+
+    tasks.withType( Jar ).configureEach {
+      destinationDirectory = file( exportDir )
+      archiveBaseName = project.archivesBaseName.toLowerCase()
+      archiveVersion = rootProject.version
+    }
+
+    task sourcesJar( type: Jar ) {
+      archiveClassifier = 'sources'
+      from sourceSets.main.allJava + sourceSets.main.resources
+      manifest { attributes manifestAttributes }
+    }
+
+    task javadocJar( type: Jar, dependsOn: javadoc ) {
+      archiveClassifier = 'javadoc'
+      manifest { attributes manifestAttributes }
+      from javadoc.destinationDir
+      from ( rootProject.projectDir ) { include 'LICENSE.txt' }
+    }
+
+    publishing {
+      System.properties[ 'org.gradle.internal.publish.checksums.insecure' ] = 'true'
+      repositories {
+        add project.repositories[ null == rootProject.properties.release ? 'clarifiSnapshots' : 'clarifiReleases' ]
+      }
+      publications {
+        myPublications( MavenPublication ) {
+          groupId = rootProject.group
+          artifactId = artifactId.toLowerCase()
+          version = rootProject.version
+          from components.java
+          artifact sourcesJar
+          artifact javadocJar
+          versionMapping {
+            allVariants {
+              fromResolutionResult()
+            }
+          }
+          pom {
+            description = product
+            developers {
+              developer {
+                id    = 'dmitriy'
+                name  = 'Dmitriy Pichugin'
+                email = 'dpichugin@clarifi.com'
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+//DP: normally, subprojects [or modules] are expected to reside in the project root like
+//DP: project                    <<--- root project
+//DP:   +--settings.gradle       <<--- settings applies to root project and all subprojects
+//DP:   +--build.gradle          <<--- build of root project
+//DP:   +--one                   <<--- root of subproject 'one'
+//DP:   |   +--build.gradle      <<--- build of subproject 'one'
+//DP:   |   +--src
+//DP:   |       +.....
+//DP:   +--two                   <<--- root of subproject 'two'
+//DP:   |   +--build.gradle      <<--- build of subproject 'two'
+//DP:   |   +--src
+//DP:   |       +.....
+
+//DP: if that structure is used, then subprojects are included in build as
+/*
+include 'one'  //DP: suproject is expected to reside in subfolder 'one' of the root project
+include 'two'  //DP: suproject is expected to reside in subfolder 'two' of the root project
+*/
+
+//DP: I like subprojects to reside in separate folder, thus location needs to be specified:
+/*
+def includeModule( String name, String location ) {
+  include name
+  project( ":${name}" ).projectDir = file( location )
+}
+*/
+

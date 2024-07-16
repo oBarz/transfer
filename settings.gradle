@@ -1,0 +1,18 @@
+ext.projectInfo = [
+  name        : 'PhoenixPodman',
+  version     : '1.0.0',
+  description : 'PhoenixPodman'
+]
+
+apply from: 'settings-base.gradle'
+
+def includeModule( String name, String location ) {
+    include name
+    project( ":${name}" ).projectDir = file( location )
+}
+
+includeModule( 'apiserver', 'apiserver' )
+includeModule( 'server_for_repl', 'server_for_repl' )
+includeModule( 'repl_client', 'repl_client' )
+includeModule( 'server_for_okta', 'server_for_okta' )
+includeModule( 'client_for_okta_auth', 'server_for_okta/client_for_okta_auth' )
